@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Bumble Like Revealer",
+  "version": "0.1",
+  "description": "Reveals if a Bumble user has already liked you based on 'their_vote'",
+  "permissions": [
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://fr1.bumble.com/*",
+    "https://bumble.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://fr1.bumble.com/app*",
+        "https://bumble.com/app*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "page.js"
+      ],
+      "matches": [
+        "https://fr1.bumble.com/*",
+        "https://bumble.com/*"
+      ]
+    }
+  ]
+}
