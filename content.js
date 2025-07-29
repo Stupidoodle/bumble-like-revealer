@@ -4,18 +4,20 @@ script.src = chrome.runtime.getURL('page.js');
 script.onload = () => script.remove();
 (document.head || document.documentElement).appendChild(script);
 
-// Store the latest encounter results
-let latestEncounterResults = null;
+// Store ALL encounter data we've seen
+let encounterCache = new Map(); // key: "name-age", value: encounter object
 let pendingProfileCheck = null;
-let lastEncounterDataHash = null;
 
-// Function to create a simple hash of encounter data to detect changes
-const hashEncounterData = (results) => {
-    return results.map(r => `${r?.user?.name}-${r?.user?.age}`).sort().join('|');
+window.getEncounterCache = () => {
+    const obj = {};
+    for (const [key, value] of encounterCache.entries()) {
+        obj[key] = value;
+    }
+    return obj;
 };
 
 // Function to process encounter data and update badge
-const processEncounterData = (results) => {
+const processEncounterData = () => {
     const nameEl = document.querySelector('.encounters-story-profile__name');
     const ageEl = document.querySelector('.encounters-story-profile__age');
 
@@ -29,11 +31,13 @@ const processEncounterData = (results) => {
 
     const name = nameEl.textContent.trim();
     const age = parseInt(ageEl.textContent.replace(',', '').trim(), 10);
+    const key = `${name}-${age}`;
 
     console.log(`[DEBUG] Looking for match: ${name}, ${age}`);
-    console.log(`[DEBUG] Available profiles:`, results.map(r => `${r?.user?.name}, ${r?.user?.age}`));
+    console.log(`[DEBUG] Cache size: ${encounterCache.size}`);
+    console.log(`[DEBUG] Cache keys:`, Array.from(encounterCache.keys()));
 
-    const match = results.find((r) => r?.user?.name?.trim() === name && r?.user?.age === age);
+    const match = encounterCache.get(key);
 
     const existingBadge = document.querySelector('#vote-info-badge');
     if (existingBadge) existingBadge.remove();
@@ -71,11 +75,11 @@ const processEncounterData = (results) => {
 };
 
 // Function to retry processing with exponential backoff
-const retryProcessing = (results, maxRetries = 5, baseDelay = 100) => {
+const retryProcessing = (maxRetries = 5, baseDelay = 100) => {
     let retryCount = 0;
 
     const tryProcess = () => {
-        if (processEncounterData(results)) {
+        if (processEncounterData()) {
             console.log('[DEBUG] Successfully processed encounter data');
             return;
         }
@@ -98,25 +102,19 @@ window.addEventListener('bumble_encounter_data', (event) => {
     const results = event.detail;
     console.log('[DEBUG] Received encounter results', results);
 
-    // Check if this is actually new data
-    const currentHash = hashEncounterData(results);
-    const isNewData = currentHash !== lastEncounterDataHash;
+    // Update our cache with ALL encounter data we've seen
+    results.forEach(encounter => {
+        if (encounter?.user?.name && encounter?.user?.age) {
+            const key = `${encounter.user.name.trim()}-${encounter.user.age}`;
+            encounterCache.set(key, encounter);
+            console.log(`[DEBUG] Cached encounter: ${key}`);
+        }
+    });
 
-    console.log(`[DEBUG] Encounter data hash: ${currentHash}`);
-    console.log(`[DEBUG] Is new data: ${isNewData}`);
+    console.log(`[DEBUG] Cache now has ${encounterCache.size} encounters`);
 
-    // Store the latest results
-    latestEncounterResults = results;
-    lastEncounterDataHash = currentHash;
-
-    // Clear any pending profile check since we have fresh data
-    if (pendingProfileCheck) {
-        clearTimeout(pendingProfileCheck);
-        pendingProfileCheck = null;
-    }
-
-    // Try to process immediately, with retries if needed
-    retryProcessing(results);
+    // Try to process immediately with updated cache
+    retryProcessing();
 });
 
 // Also observe DOM changes to catch when new profiles are loaded
@@ -132,22 +130,11 @@ const observer = new MutationObserver((mutations) => {
     });
 
     if (hasProfileChanges) {
-        console.log('[DEBUG] Profile elements detected, waiting for fresh encounter data...');
-
-        // Clear any existing pending check
-        if (pendingProfileCheck) {
-            clearTimeout(pendingProfileCheck);
-        }
-
-        // Wait longer for the API call to complete and fresh data to arrive
-        pendingProfileCheck = setTimeout(() => {
-            if (latestEncounterResults) {
-                console.log('[DEBUG] Processing encounter data after profile change');
-                processEncounterData(latestEncounterResults);
-            } else {
-                console.log('[DEBUG] No encounter data available yet');
-            }
-        }, 2000); // Wait 2 seconds for API response
+        console.log('[DEBUG] Profile elements detected, processing with current cache');
+        // Small delay to ensure DOM is fully updated
+        setTimeout(() => {
+            processEncounterData();
+        }, 50);
     }
 });
 
