@@ -7,14 +7,14 @@
     "scripting"
   ],
   "host_permissions": [
-    "https://fr1.bumble.com/*",
-    "https://bumble.com/*"
+    "https://bumble.com/*",
+    "https://*.bumble.com/*"
   ],
   "content_scripts": [
     {
       "matches": [
-        "https://fr1.bumble.com/app*",
-        "https://bumble.com/app*"
+        "https://bumble.com/app*",
+        "https://*.bumble.com/app*"
       ],
       "js": [
         "content.js"
@@ -28,8 +28,8 @@
         "page.js"
       ],
       "matches": [
-        "https://fr1.bumble.com/*",
-        "https://bumble.com/*"
+        "https://bumble.com/*",
+        "https://*.bumble.com/*"
       ]
     }
   ]
