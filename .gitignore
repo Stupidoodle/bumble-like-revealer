@@ -216,3 +216,8 @@ cython_debug/
 **/.DS_Store
 consent.bumble.com/
 us1.bumble.com/
+
+# Node / Bun toolchain
+node_modules/
+*.tsbuildinfo
+# dist/ is intentionally committed so the extension still loads unpacked with zero build.

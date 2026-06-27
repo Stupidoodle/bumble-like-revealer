@@ -1,0 +1,17 @@
+{
+  "name": "bumble-like-revealer",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Reveals who already liked you on Bumble by reading the data Bumble already sends to your browser.",
+  "scripts": {
+    "build": "bun run build.ts",
+    "dev": "bun run build.ts --watch",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.270",
+    "typescript": "^5.6.0"
+  }
+}
