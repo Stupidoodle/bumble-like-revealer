@@ -1,147 +1,247 @@
-// Inject page-level script (so we can hook into window.fetch/XHR)
-const script = document.createElement('script');
-script.src = chrome.runtime.getURL('page.js');
-script.onload = () => script.remove();
-(document.head || document.documentElement).appendChild(script);
+// Listens for slimmed encounter data from page.js, caches it keyed by
+// the stable user_id, and badges the profile card the user is actually
+// looking at with their like/pass status. Read-only: it never votes.
+(function () {
+  'use strict';
 
-// Store ALL encounter data we've seen
-let encounterCache = new Map(); // key: "name-age", value: encounter object
-let pendingProfileCheck = null;
+  // ── Config ───────────────────────────────────────────────────
+  const DEBUG = false;
+  const log = (...a) => { if (DEBUG) console.log('[BE]', ...a); };
 
-window.getEncounterCache = () => {
-    const obj = {};
-    for (const [key, value] of encounterCache.entries()) {
-        obj[key] = value;
+  const CHANNEL = '__be_encounters';
+  const BADGE_ID = 'be-vote-badge';
+  const STORAGE_KEY = 'be_cache_v2';
+  const CACHE_LIMIT = 1000;        // LRU cap on remembered profiles
+  const DOM_SETTLE_MS = 40;        // coalesce DOM bursts before reading
+  const BROKEN_AFTER_MS = 8000;    // no data by now ⇒ likely broken
+
+  const THEIR_VOTE = { NOT_VOTED: 1, LIKED_YOU: 2, REJECTED_YOU: 3 };
+
+  const VOTE_BADGE = {
+    [THEIR_VOTE.NOT_VOTED]:    { text: 'NOT VOTED',    color: '#f59e0b' },
+    [THEIR_VOTE.LIKED_YOU]:    { text: 'LIKED YOU ❤️', color: '#10b981' },
+    [THEIR_VOTE.REJECTED_YOU]: { text: 'PASSED 💔',    color: '#f43f5e' },
+  };
+  const NEUTRAL = '#94a3b8';
+
+  // Prefer stable QA/aria hooks; fall back to the BEM class. Build
+  // pipelines hash CSS classes but tend to keep test attributes.
+  const NAME_SELECTORS = [
+    '[data-qa-role="encounters-story-profile-name"]',
+    '.encounters-story-profile__name',
+  ];
+  const AGE_SELECTORS = [
+    '[data-qa-role="encounters-story-profile-age"]',
+    '.encounters-story-profile__age',
+  ];
+  const CARD_SELECTOR = '.encounters-story-profile';
+
+  // ── State ────────────────────────────────────────────────────
+  const byId = new Map();          // user_id -> slim record (insertion-ordered)
+  const idsByNameAge = new Map();  // "name|age" -> Set(user_id) for DOM lookup
+  let liveReceived = false;
+  let suspectBroken = false;
+  let lastBadgeKey = null;
+
+  // ── Helpers ──────────────────────────────────────────────────
+  const normName = (n) => String(n == null ? '' : n).trim().toLowerCase();
+  const nameAgeKey = (name, age) => `${normName(name)}|${age}`;
+  const haveData = () => liveReceived || byId.size > 0;
+
+  const queryFirst = (selectors, root) => {
+    const scope = root || document;
+    for (const sel of selectors) {
+      const el = scope.querySelector(sel);
+      if (el) return el;
     }
-    return obj;
-};
-
-// Function to process encounter data and update badge
-const processEncounterData = () => {
-    const nameEl = document.querySelector('.encounters-story-profile__name');
-    const ageEl = document.querySelector('.encounters-story-profile__age');
-
-    console.log(`[DEBUG] Name element: ${nameEl ? nameEl.textContent : 'not found'}`);
-    console.log(`[DEBUG] Age element: ${ageEl ? ageEl.textContent : 'not found'}`);
-
-    if (!nameEl || !ageEl) {
-        console.warn('[DEBUG] Missing name or age elements');
-        return false; // Indicate processing failed
+    return null;
+  };
+  const queryAll = (selectors) => {
+    for (const sel of selectors) {
+      const els = document.querySelectorAll(sel);
+      if (els.length) return Array.from(els);
     }
+    return [];
+  };
 
-    const name = nameEl.textContent.trim();
-    const age = parseInt(ageEl.textContent.replace(',', '').trim(), 10);
-    const key = `${name}-${age}`;
+  const isVisible = (el) => {
+    const r = el.getBoundingClientRect();
+    const vh = window.innerHeight || document.documentElement.clientHeight;
+    return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < vh;
+  };
 
-    console.log(`[DEBUG] Looking for match: ${name}, ${age}`);
-    console.log(`[DEBUG] Cache size: ${encounterCache.size}`);
-    console.log(`[DEBUG] Cache keys:`, Array.from(encounterCache.keys()));
+  // Pick the name element on the card the user is actually looking at,
+  // not a transient outgoing/incoming card sharing the DOM mid-swipe.
+  const getActiveProfile = () => {
+    const names = queryAll(NAME_SELECTORS).filter(isVisible);
+    if (!names.length) return null;
+    // Largest visible area ≈ the front card.
+    names.sort((a, b) => {
+      const ra = a.getBoundingClientRect();
+      const rb = b.getBoundingClientRect();
+      return rb.width * rb.height - ra.width * ra.height;
+    });
+    const nameEl = names[0];
+    const cardEl = nameEl.closest(CARD_SELECTOR) || nameEl.parentElement;
+    const ageEl = queryFirst(AGE_SELECTORS, cardEl) || queryFirst(AGE_SELECTORS);
+    return { nameEl, ageEl, cardEl };
+  };
 
-    const match = encounterCache.get(key);
+  const parseAge = (ageEl) => {
+    if (!ageEl) return NaN;
+    const m = String(ageEl.textContent).match(/\d+/);
+    return m ? parseInt(m[0], 10) : NaN;
+  };
 
-    const existingBadge = document.querySelector('#vote-info-badge');
-    if (existingBadge) existingBadge.remove();
+  // ── Cache ────────────────────────────────────────────────────
+  const remember = (rec) => {
+    if (!rec || rec.user_id == null) return;
+    const id = String(rec.user_id);
+    if (byId.has(id)) byId.delete(id); // refresh insertion order (LRU)
+    byId.set(id, rec);
+    while (byId.size > CACHE_LIMIT) byId.delete(byId.keys().next().value);
 
+    const k = nameAgeKey(rec.name, rec.age);
+    let set = idsByNameAge.get(k);
+    if (!set) { set = new Set(); idsByNameAge.set(k, set); }
+    set.add(id);
+  };
+
+  // Resolve on-screen name+age to a single record, or flag ambiguity
+  // instead of guessing — the badge must never assert a wrong vote.
+  const resolve = (name, age) => {
+    const set = idsByNameAge.get(nameAgeKey(name, age));
+    if (!set || set.size === 0) return { status: 'miss' };
+    if (set.size > 1) return { status: 'ambiguous' };
+    const rec = byId.get(set.values().next().value);
+    return rec ? { status: 'hit', rec } : { status: 'miss' };
+  };
+
+  // ── Badge ────────────────────────────────────────────────────
+  const enrichmentChips = (rec) => {
+    const chips = [];
+    if (rec.is_crush) chips.push('⭐ SUPERSWIPED');
+    if (rec.online_status === 1) chips.push('🟢');
+    if (rec.is_verified) chips.push('✓');
+    return chips.length ? ' · ' + chips.join(' ') : '';
+  };
+
+  const clearBadge = () => {
+    document.querySelectorAll('#' + BADGE_ID).forEach((b) => b.remove());
+    lastBadgeKey = null;
+  };
+
+  const render = (cardEl, nameEl, key, text, color) => {
+    if (key === lastBadgeKey && document.getElementById(BADGE_ID)) return; // no churn
+    document.querySelectorAll('#' + BADGE_ID).forEach((b) => b.remove());
     const badge = document.createElement('span');
-    badge.id = 'vote-info-badge';
-    badge.style.marginLeft = '8px';
-    badge.style.fontWeight = 'bold';
-    badge.style.fontSize = '16px';
+    badge.id = BADGE_ID;
+    badge.style.cssText = `margin-left:8px;font-weight:700;font-size:15px;color:${color};`;
+    badge.textContent = text;
+    (nameEl.parentElement || cardEl).appendChild(badge);
+    lastBadgeKey = key;
+  };
 
-    if (!match) {
-        badge.textContent = '[NEW PROFILE]';
-        badge.style.color = 'blue';
-        console.log(`[DEBUG] No match found for ${name}, ${age} - this is a new profile`);
-    } else {
-        const vote = match.user.their_vote;
-        console.log(`[DEBUG] Matched vote for ${name}, ${age}: their_vote=${vote}`);
-        if (vote === 1) {
-            badge.textContent = '[NOT VOTED]';
-            badge.style.color = 'orange';
-        } else if (vote === 2) {
-            badge.textContent = '[LIKED YOU] ❤️';
-            badge.style.color = 'green';
-        } else if (vote === 3) {
-            badge.textContent = '[REJECTED YOU] 💔';
-            badge.style.color = 'red';
+  const processEncounter = () => {
+    try {
+      const active = getActiveProfile();
+      if (!active || !active.nameEl) return;
+      const name = active.nameEl.textContent.trim();
+      const age = parseAge(active.ageEl);
+      if (!name || Number.isNaN(age)) return; // wait for a real render
+
+      const r = resolve(name, age);
+      const { cardEl, nameEl } = active;
+
+      if (r.status === 'hit') {
+        const cfg = VOTE_BADGE[r.rec.their_vote];
+        if (cfg) {
+          render(cardEl, nameEl, 'id:' + r.rec.user_id,
+            `[${cfg.text}]${enrichmentChips(r.rec)}`, cfg.color);
         } else {
-            badge.textContent = `[UNKNOWN: ${vote}]`;
-            badge.style.color = 'gray';
+          render(cardEl, nameEl, 'unk:' + r.rec.user_id, '[UNKNOWN]', NEUTRAL);
         }
+      } else if (r.status === 'ambiguous') {
+        render(cardEl, nameEl, 'amb:' + name + age, '[UNCERTAIN — duplicate name]', NEUTRAL);
+      } else if (haveData()) {
+        render(cardEl, nameEl, 'new:' + name + age, '[NEW PROFILE]', '#3b82f6');
+      } else if (suspectBroken) {
+        render(cardEl, nameEl, 'nodata', '[NO DATA — extension may be broken]', NEUTRAL);
+      } else {
+        clearBadge(); // still loading: assert nothing
+      }
+    } catch (e) {
+      if (DEBUG) console.error('[BE] process failed', e);
     }
+  };
 
-    nameEl.parentElement?.appendChild(badge);
-    return true; // Indicate processing succeeded
-};
+  // ── Scheduler (one coalesced pass per burst) ─────────────────
+  let scheduled = false;
+  let settleTimer = null;
+  const schedule = () => {
+    if (settleTimer) clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => {
+      settleTimer = null;
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(() => { scheduled = false; processEncounter(); });
+    }, DOM_SETTLE_MS);
+  };
 
-// Function to retry processing with exponential backoff
-const retryProcessing = (maxRetries = 5, baseDelay = 100) => {
-    let retryCount = 0;
+  // ── Persistence (the durable "burn book") ────────────────────
+  let writeTimer = null;
+  const persist = () => {
+    if (writeTimer) clearTimeout(writeTimer);
+    writeTimer = setTimeout(() => {
+      writeTimer = null;
+      try {
+        chrome.storage && chrome.storage.local.set({ [STORAGE_KEY]: Array.from(byId.values()) });
+      } catch (e) { if (DEBUG) console.error('[BE] persist', e); }
+    }, 1000);
+  };
 
-    const tryProcess = () => {
-        if (processEncounterData()) {
-            console.log('[DEBUG] Successfully processed encounter data');
-            return;
+  const hydrate = () => {
+    try {
+      if (!chrome.storage) return;
+      chrome.storage.local.get(STORAGE_KEY, (data) => {
+        const arr = data && data[STORAGE_KEY];
+        if (Array.isArray(arr)) {
+          arr.forEach(remember);
+          log('hydrated', arr.length);
+          schedule();
         }
+      });
+    } catch (e) { if (DEBUG) console.error('[BE] hydrate', e); }
+  };
 
-        retryCount++;
-        if (retryCount < maxRetries) {
-            const delay = baseDelay * Math.pow(2, retryCount - 1);
-            console.log(`[DEBUG] Retrying in ${delay}ms (attempt ${retryCount}/${maxRetries})`);
-            setTimeout(tryProcess, delay);
-        } else {
-            console.warn('[DEBUG] Max retries reached, giving up');
-        }
-    };
-
-    tryProcess();
-};
-
-// Listen for encounter results from page context
-window.addEventListener('bumble_encounter_data', (event) => {
+  // ── Data bridge ──────────────────────────────────────────────
+  window.addEventListener(CHANNEL, (event) => {
     const results = event.detail;
-    console.log('[DEBUG] Received encounter results', results);
-
-    // Update our cache with ALL encounter data we've seen
-    results.forEach(encounter => {
-        if (encounter?.user?.name && encounter?.user?.age) {
-            const key = `${encounter.user.name.trim()}-${encounter.user.age}`;
-            const theirVote = encounter.user.their_vote;
-            encounterCache.set(key, encounter);
-            console.log(`[DEBUG] Cached encounter: ${key} with vote ${theirVote}`);
-        }
+    if (!Array.isArray(results)) return;
+    liveReceived = true;
+    results.forEach((rec) => {
+      try { remember(rec); } catch (e) { if (DEBUG) console.error('[BE] bad record', e); }
     });
+    log('cached batch', results.length, 'total', byId.size);
+    persist();
+    schedule();
+  });
 
-    console.log(`[DEBUG] Cache now has ${encounterCache.size} encounters`);
+  // ── Observe the deck ─────────────────────────────────────────
+  const startObserver = () => {
+    const root =
+      document.querySelector('.encounters-album') ||
+      document.querySelector('main') ||
+      document.body;
+    new MutationObserver(schedule).observe(root, { childList: true, subtree: true });
+    log('observing', root === document.body ? 'body' : 'encounters root');
+  };
 
-    // Try to process immediately with updated cache
-    retryProcessing();
-});
-
-// Also observe DOM changes to catch when new profiles are loaded
-const observer = new MutationObserver((mutations) => {
-    // Check if profile elements have been added/changed
-    const hasProfileChanges = mutations.some(mutation => {
-        return Array.from(mutation.addedNodes).some(node => {
-            if (node.nodeType === Node.ELEMENT_NODE) {
-                return node.matches && (node.matches('.encounters-story-profile__name') || node.matches('.encounters-story-profile__age') || node.querySelector('.encounters-story-profile__name') || node.querySelector('.encounters-story-profile__age'));
-            }
-            return false;
-        });
-    });
-
-    if (hasProfileChanges) {
-        console.log('[DEBUG] Profile elements detected, processing with current cache');
-        // Small delay to ensure DOM is fully updated
-        setTimeout(() => {
-            processEncounterData();
-        }, 50);
-    }
-});
-
-// Start observing
-observer.observe(document.body, {
-    childList: true, subtree: true
-});
-
-console.log('[DEBUG] Content script loaded with retry logic and DOM observation');
+  hydrate();
+  startObserver();
+  // Pull any batch page.js buffered before we were listening.
+  window.dispatchEvent(new CustomEvent(CHANNEL + ':pull'));
+  // If no data ever arrives, surface a broken state instead of lying.
+  setTimeout(() => { if (!liveReceived) { suspectBroken = true; schedule(); } }, BROKEN_AFTER_MS);
+  log('content script ready');
+})();

@@ -1,16 +1,24 @@
 {
   "manifest_version": 3,
   "name": "Bumble Like Revealer",
-  "version": "0.1",
-  "description": "Reveals if a Bumble user has already liked you based on 'their_vote'",
+  "version": "0.2.0",
+  "description": "Reveals who already liked you on Bumble by reading the data Bumble already sends to your browser.",
   "permissions": [
-    "scripting"
+    "storage"
   ],
-  "host_permissions": [
-    "https://bumble.com/*",
-    "https://*.bumble.com/*"
-  ],
+  "minimum_chrome_version": "111",
   "content_scripts": [
+    {
+      "matches": [
+        "https://bumble.com/app*",
+        "https://*.bumble.com/app*"
+      ],
+      "js": [
+        "page.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
     {
       "matches": [
         "https://bumble.com/app*",
@@ -22,15 +30,10 @@
       "run_at": "document_idle"
     }
   ],
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "page.js"
-      ],
-      "matches": [
-        "https://bumble.com/*",
-        "https://*.bumble.com/*"
-      ]
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "bumble-like-revealer@stupidoodle",
+      "strict_min_version": "128.0"
     }
-  ]
+  }
 }
