@@ -162,12 +162,20 @@
       badge.style.position = 'relative';
       badge.style.zIndex = '2147483000';
       badge._rec = rec;
-      badge.addEventListener('click', (e) => {
+      // Open on pointerdown (the FIRST event of the gesture) and stop it there,
+      // so Bumble's own card handlers never fire on mousedown and re-render/move
+      // the badge mid-gesture (which swallows a plain click, so the dossier never
+      // opened on a real mouse click). Swallow the trailing mousedown/click too.
+      const openFromBadge = (e) => {
         e.stopPropagation();
         e.preventDefault();
         try { openDossier(rec.user_id); }
         catch (err) { if (DEBUG) console.error('[BE] open dossier', err); }
-      });
+      };
+      badge.addEventListener('pointerdown', openFromBadge);
+      const swallow = (e) => { e.stopPropagation(); e.preventDefault(); };
+      badge.addEventListener('mousedown', swallow);
+      badge.addEventListener('click', swallow);
     }
     (nameEl.parentElement || cardEl).appendChild(badge);
     lastBadgeKey = key;
