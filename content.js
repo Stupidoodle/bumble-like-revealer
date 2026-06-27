@@ -153,6 +153,14 @@
       badge.style.cursor = 'pointer';
       badge.title = 'Open dossier (Cmd/Ctrl+D)';
       badge.classList.add('be-badge--armed');
+      // Bumble's card name container is pointer-events:none (click-through), which
+      // the badge inherits, so real mouse clicks pass straight through it to
+      // Bumble's nav overlay behind. Force the armed badge clickable and above the
+      // card overlays so its open-dossier click actually lands. (Synthetic .click()
+      // skips hit-testing, which is why this was invisible until a real click.)
+      badge.style.pointerEvents = 'auto';
+      badge.style.position = 'relative';
+      badge.style.zIndex = '2147483000';
       badge._rec = rec;
       badge.addEventListener('click', (e) => {
         e.stopPropagation();
