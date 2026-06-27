@@ -146,16 +146,25 @@
   const USER_RPC = 'SERVER_GET_USER';
   const MT_GET_USER = 403;
   const PINGBACK_SALT = 'whitetelevisionbulbelectionroofhorseflying';
+  // Keep in sync with content.js BE_PUBLIC_SAFE (default false). When true, the
+  // three de-anonymizing projection ids (520 distance, 602, 900) are dropped
+  // below so they are never even requested from the server.
+  const BE_PUBLIC_SAFE = false;
   // 95-id SUPER_PROJECTION (mirrors bumble_api client.py SUPER_PROJECTION).
-  const SUPER_PROJECTION = [
-    12, 42, 91, 93, 100, 200, 210, 220, 230, 231, 240, 250, 260, 280, 290,
-    291, 300, 304, 305, 310, 311, 330, 331, 333, 340, 341, 370, 380, 382,
-    400, 471, 480, 490, 492, 493, 494, 520, 530, 531, 540, 550, 560, 570,
-    580, 582, 583, 584, 585, 586, 590, 591, 592, 600, 602, 610, 620, 630,
-    640, 650, 660, 662, 670, 700, 732, 733, 762, 763, 790, 850, 860, 880,
-    890, 900, 911, 912, 930, 1110, 1140, 1150, 1160, 1161, 1162, 1163, 1210,
-    1251, 1253, 1262, 1422, 1423, 1424, 1433, 1437, 1447, 1452, 1482,
-  ];
+  const SUPER_PROJECTION = (function () {
+    const base = [
+      12, 42, 91, 93, 100, 200, 210, 220, 230, 231, 240, 250, 260, 280, 290,
+      291, 300, 304, 305, 310, 311, 330, 331, 333, 340, 341, 370, 380, 382,
+      400, 471, 480, 490, 492, 493, 494, 520, 530, 531, 540, 550, 560, 570,
+      580, 582, 583, 584, 585, 586, 590, 591, 592, 600, 602, 610, 620, 630,
+      640, 650, 660, 662, 670, 700, 732, 733, 762, 763, 790, 850, 860, 880,
+      890, 900, 911, 912, 930, 1110, 1140, 1150, 1160, 1161, 1162, 1163, 1210,
+      1251, 1253, 1262, 1422, 1423, 1424, 1433, 1437, 1447, 1452, 1482,
+    ];
+    if (!BE_PUBLIC_SAFE) return base;
+    const drop = { 520: 1, 602: 1, 900: 1 };
+    return base.filter((id) => !drop[id]);
+  })();
   // Mirrors client.py CHAT_ALBUM_REQUESTS (preview + large photo urls).
   const ALBUM_REQUESTS = [
     {

@@ -17,12 +17,19 @@
 
   const THEIR_VOTE = { NOT_VOTED: 1, LIKED_YOU: 2, REJECTED_YOU: 3 };
 
+  // Accent tokens shared with the Phase 2 dossier so one fact never reads
+  // green in the badge and honey in the rail. Honey = LIKED/MATCH (dossier
+  // --be-honey); muted warm ink = PASSED/NEW/NEUTRAL/UNCERTAIN/NO-DATA
+  // (dossier --be-ink-mute); the online-green #45D27A (dossier --be-online)
+  // is carried by the green enrichment emoji, the only green left on the badge.
+  const BADGE_HONEY = '#F6B23C';
+  const BADGE_MUTE = '#ADA9A0';
   const VOTE_BADGE = {
-    [THEIR_VOTE.NOT_VOTED]:    { text: 'NOT VOTED',    color: '#f59e0b' },
-    [THEIR_VOTE.LIKED_YOU]:    { text: 'LIKED YOU ❤️', color: '#10b981' },
-    [THEIR_VOTE.REJECTED_YOU]: { text: 'PASSED 💔',    color: '#f43f5e' },
+    [THEIR_VOTE.NOT_VOTED]:    { text: 'NOT VOTED',    color: BADGE_MUTE },
+    [THEIR_VOTE.LIKED_YOU]:    { text: 'LIKED YOU ❤️', color: BADGE_HONEY },
+    [THEIR_VOTE.REJECTED_YOU]: { text: 'PASSED 💔',    color: BADGE_MUTE },
   };
-  const NEUTRAL = '#94a3b8';
+  const NEUTRAL = BADGE_MUTE;
 
   // Prefer stable QA/aria hooks; fall back to the BEM class. Build
   // pipelines hash CSS classes but tend to keep test attributes.
@@ -136,7 +143,7 @@
     document.querySelectorAll('#' + BADGE_ID).forEach((b) => b.remove());
     const badge = document.createElement('span');
     badge.id = BADGE_ID;
-    badge.style.cssText = `margin-left:8px;font-weight:700;font-size:15px;color:${color};`;
+    badge.style.cssText = `margin-left:8px;font-weight:700;font-size:15px;color:${color};text-shadow:0 1px 3px rgba(0,0,0,0.85);`;
     badge.textContent = text;
     // Phase 2 (additive): when a cached record backs this badge, arm it as
     // the sole, lazy trigger for the profile dossier. Existing text/color/
@@ -147,9 +154,11 @@
       badge.title = 'Open dossier (Cmd/Ctrl+D)';
       badge.classList.add('be-badge--armed');
       badge._rec = rec;
-      badge.addEventListener('click', () => {
+      badge.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
         try { openDossier(rec.user_id); }
-        catch (e) { if (DEBUG) console.error('[BE] open dossier', e); }
+        catch (err) { if (DEBUG) console.error('[BE] open dossier', err); }
       });
     }
     (nameEl.parentElement || cardEl).appendChild(badge);
@@ -158,6 +167,9 @@
 
   const processEncounter = () => {
     try {
+      // If the deck advanced while the rail is open, resync (or close) it so
+      // the footer never refetches/retries a profile the owner swiped past.
+      if (railOpen) syncRailToActive();
       const active = getActiveProfile();
       if (!active || !active.nameEl) return;
       const name = active.nameEl.textContent.trim();
@@ -176,11 +188,11 @@
           render(cardEl, nameEl, 'unk:' + r.rec.user_id, '[UNKNOWN]', NEUTRAL, r.rec);
         }
       } else if (r.status === 'ambiguous') {
-        render(cardEl, nameEl, 'amb:' + name + age, '[UNCERTAIN - duplicate name]', NEUTRAL);
+        render(cardEl, nameEl, 'amb:' + name + age, '[UNCERTAIN · duplicate name]', NEUTRAL);
       } else if (haveData()) {
-        render(cardEl, nameEl, 'new:' + name + age, '[NEW PROFILE]', '#3b82f6');
+        render(cardEl, nameEl, 'new:' + name + age, '[NEW PROFILE]', BADGE_MUTE);
       } else if (suspectBroken) {
-        render(cardEl, nameEl, 'nodata', '[NO DATA - extension may be broken]', NEUTRAL);
+        render(cardEl, nameEl, 'nodata', '[NO DATA · extension may be broken]', NEUTRAL);
       } else {
         clearBadge(); // still loading: assert nothing
       }
@@ -247,7 +259,17 @@
       document.querySelector('.encounters-album') ||
       document.querySelector('main') ||
       document.body;
-    new MutationObserver(schedule).observe(root, { childList: true, subtree: true });
+    // Ignore mutations that originate inside our own overlays (rail, lightbox,
+    // scrim) so opening or scrolling the dossier never re-triggers a deck pass.
+    const fromOurUi = (n) => {
+      const el = n && n.nodeType === 1 ? n : (n && n.parentElement);
+      return !!(el && el.closest && el.closest('#be-dossier,#be-lightbox,#be-dossier-scrim'));
+    };
+    new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (!fromOurUi(m.target)) { schedule(); return; }
+      }
+    }).observe(root, { childList: true, subtree: true });
     log('observing', root === document.body ? 'body' : 'encounters root');
   };
 
@@ -568,7 +590,8 @@
     if (dob) kids.push(row('Date of birth', dob, { mono: true }));
     const gchips = [];
     if (rec.gender != null) gchips.push(chip(GENDER[rec.gender] || ('gender ' + rec.gender), 'outline'));
-    if (rec.extended_gender) gchips.push(chip(String(strOf(rec.extended_gender) || rec.extended_gender), 'outline'));
+    const eg = strOf(rec.extended_gender);
+    if (eg) gchips.push(chip(eg, 'outline'));
     const cr = chipRow(...gchips);
     if (cr) kids.push(cr);
     if (rec.encrypted_user_id != null) kids.push(copyRow('Encrypted ID', String(rec.encrypted_user_id)));
@@ -861,11 +884,18 @@
     const id = String(user.user_id);
     const slim = byId.get(id) || {};
     const merged = Object.assign({}, slim, user, { _full: true, _meta: Object.assign({ at: Date.now() }, meta) });
+    // Public-safe build: strip the de-anonymizing fields from the STORED record
+    // (not just the view), before caching or persisting. Keep textual
+    // distance_long/short so the LOCATION section still reads naturally.
+    if (BE_PUBLIC_SAFE) { delete merged.distance; delete merged.is_teleported; delete merged.blocked_you; }
     if (fullById.has(id)) fullById.delete(id);
     fullById.set(id, merged);
     while (fullById.size > FULL_CACHE_LIMIT) fullById.delete(fullById.keys().next().value);
-    // Keep the slim cache + badge fresh; the existing small write is unchanged.
-    try { remember(slimFromFull(user)); persist(); } catch (e) { if (DEBUG) console.error('[BE] remember full', e); }
+    // Re-slim from the MERGED record (not the raw GET_USER payload): encounters
+    // fields (their_vote/is_crush/is_match/is_hot) are absent from GET_USER, so
+    // slimming the raw user would write their_vote:undefined and corrupt the
+    // good encounters record. merged preserves them.
+    try { remember(slimFromFull(merged)); persist(); } catch (e) { if (DEBUG) console.error('[BE] remember full', e); }
     persistFull();
     return merged;
   };
@@ -879,17 +909,17 @@
 #be-dossier{
   --be-honey:#F6B23C;--be-honey-12:rgba(246,178,60,0.12);--be-honey-20:rgba(246,178,60,0.20);--be-honey-line:rgba(246,178,60,0.55);
   --be-online:#45D27A;--be-online-glow:rgba(69,210,122,0.45);
-  --be-glass:rgba(13,14,17,0.72);--be-glass-raise:rgba(20,21,25,0.66);--be-backdrop:blur(18px) saturate(118%);
+  --be-glass:rgba(13,14,17,0.72);--be-glass-raise:rgba(20,21,25,0.66);--be-backdrop:blur(10px) saturate(118%);
   --be-edge:rgba(255,255,255,0.10);--be-line:rgba(255,255,255,0.075);--be-line-2:rgba(255,255,255,0.14);
-  --be-ink:#F3F1EC;--be-ink-mute:#ADA9A0;--be-ink-faint:#74716A;
-  --be-r-sm:6px;--be-r-lg:10px;
+  --be-ink:#F3F1EC;--be-ink-mute:#ADA9A0;--be-ink-faint:#8C887F;
+  --be-r-xs:2px;--be-r-sm:6px;--be-r-lg:10px;
   --be-shadow:0 10px 44px rgba(0,0,0,0.55),0 2px 10px rgba(0,0,0,0.40);
   --be-sans:-apple-system,BlinkMacSystemFont,'Inter',system-ui,'Segoe UI',sans-serif;
   --be-mono:ui-monospace,'SF Mono','JetBrains Mono',Menlo,Consolas,monospace;
   --be-serif:'Newsreader','Iowan Old Style',Georgia,'Times New Roman',serif;
   position:fixed;top:0;right:0;height:100dvh;width:clamp(340px,30vw,400px);z-index:2147483000;
   display:none;flex-direction:column;
-  background:var(--be-glass);background-image:linear-gradient(180deg,rgba(8,9,11,0.62) 0%,rgba(8,9,11,0.82) 100%);
+  background:var(--be-glass);background-image:linear-gradient(180deg,rgba(8,9,11,0.88) 0%,rgba(8,9,11,0.97) 100%);
   -webkit-backdrop-filter:var(--be-backdrop);backdrop-filter:var(--be-backdrop);
   border-left:1px solid var(--be-edge);border-top-left-radius:var(--be-r-lg);border-bottom-left-radius:var(--be-r-lg);
   box-shadow:var(--be-shadow);color:var(--be-ink);font-family:var(--be-sans);font-size:13px;line-height:1.4;
@@ -932,7 +962,7 @@
 #be-dossier .be-score-liked .be-score-fig,#be-dossier .be-score-match .be-score-fig{color:var(--be-honey);}
 #be-dossier .be-score-passed .be-score-fig{color:var(--be-ink-mute);}
 #be-dossier .be-score-unit{font:500 12px/1 var(--be-mono);color:var(--be-ink-faint);}
-#be-dossier .be-score-meter{display:block;height:2px;width:100%;background:rgba(255,255,255,0.08);border-radius:2px;margin-top:6px;overflow:hidden;}
+#be-dossier .be-score-meter{display:block;height:2px;width:100%;background:rgba(255,255,255,0.08);border-radius:var(--be-r-xs);margin-top:6px;overflow:hidden;}
 #be-dossier .be-score-fill{display:block;height:100%;width:0;background:var(--be-honey-line);transition:width 900ms ease-out;}
 #be-dossier .be-match-quote{margin-top:12px;font:italic 400 14px/1.45 var(--be-serif);color:var(--be-ink-mute);}
 /* Body */
@@ -999,7 +1029,7 @@
 #be-dossier .be-empty{padding:48px 16px;text-align:center;color:var(--be-ink-faint);font:400 13px/1.4 var(--be-sans);}
 #be-dossier .be-error{padding:16px;}
 #be-dossier .be-retry{font:500 12px/1.4 var(--be-mono);color:var(--be-honey);text-align:left;padding:8px 10px;border-radius:var(--be-r-sm);box-shadow:inset 0 0 0 1px var(--be-honey-line);width:100%;}
-#be-dossier .be-sk{background:linear-gradient(90deg,rgba(246,178,60,0.06) 25%,rgba(246,178,60,0.14) 50%,rgba(246,178,60,0.06) 75%);background-size:400px 100%;animation:be-shimmer 1.2s linear infinite;border-radius:4px;height:10px;}
+#be-dossier .be-sk{background:linear-gradient(90deg,rgba(246,178,60,0.06) 25%,rgba(246,178,60,0.14) 50%,rgba(246,178,60,0.06) 75%);background-size:400px 100%;animation:be-shimmer 1.2s linear infinite;border-radius:var(--be-r-sm);height:10px;}
 #be-dossier .be-sk-head{width:38%;height:9px;margin-bottom:14px;}
 #be-dossier .be-sk-row{display:flex;justify-content:space-between;gap:16px;padding:6px 0;}
 #be-dossier .be-sk-label{flex:0 0 28%;}
@@ -1025,17 +1055,25 @@
 #be-lightbox .be-lb-close{position:absolute;top:18px;right:18px;width:36px;height:36px;font-size:16px;}
 #be-lightbox .be-lb-prev,#be-lightbox .be-lb-next{width:44px;height:44px;font-size:22px;margin:0 10px;}
 /* Armed badge (lives in Bumble's DOM; only our id is targeted) */
-#be-vote-badge.be-badge--armed{border-radius:6px;padding:1px 6px;transition:background 140ms ease,box-shadow 140ms ease;}
+#be-vote-badge.be-badge--armed{border-radius:6px;padding:1px 6px;background:rgba(8,9,11,0.5);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);transition:background 140ms ease,box-shadow 140ms ease;}
 #be-vote-badge.be-badge--armed:hover{background:rgba(246,178,60,0.12);box-shadow:inset 0 0 0 1px rgba(246,178,60,0.55);}
 #be-vote-badge.be-badge--armed:hover::after{content:' \\2318 D';font-size:10px;opacity:0.7;font-family:ui-monospace,Menlo,monospace;}
 /* Animations */
 @keyframes be-pulse{0%,100%{box-shadow:0 0 0 0 var(--be-online-glow);}50%{box-shadow:0 0 0 4px rgba(69,210,122,0);}}
 @keyframes be-shimmer{0%{background-position:-200px 0;}100%{background-position:200px 0;}}
-/* Reduced motion: collapse all motion to instant */
+/* Reduced motion: collapse all motion to instant and drop GPU backdrop blur */
 #be-dossier.be-rm,#be-dossier.be-rm *{transition:none !important;animation:none !important;}
+#be-dossier.be-rm{-webkit-backdrop-filter:none !important;backdrop-filter:none !important;}
 @media (prefers-reduced-motion: reduce){
   #be-dossier,#be-dossier *,#be-vote-badge.be-badge--armed{transition:none !important;animation:none !important;}
   #be-dossier .be-dot{animation:none !important;}
+  #be-dossier,#be-dossier-scrim,#be-lightbox .be-lb-scrim,#be-lightbox button,#be-vote-badge.be-badge--armed{-webkit-backdrop-filter:none !important;backdrop-filter:none !important;}
+}
+/* Narrow viewports: the scrim already blurs, so drop the rail's backdrop blur
+   to avoid two stacked blurred layers over the animating deck. The raised
+   opaque gradient fill keeps text contrast (AA) without it. */
+@media (max-width:1179px){
+  #be-dossier{-webkit-backdrop-filter:none;backdrop-filter:none;}
 }
 `;
 
@@ -1107,6 +1145,29 @@
     if (lastFocus && lastFocus.focus) { try { lastFocus.focus(); } catch (e) {} }
   };
 
+  // The deck advanced while the rail is open. Never leave the dossier pinned to
+  // a profile the owner already swiped past, or the footer refetch/error-retry
+  // would hit the OLD user_id. Re-point from cache only; if the new card has no
+  // cached full record, close rather than auto-fetch (one signed GET_USER per
+  // explicit open, never per swipe).
+  const syncRailToActive = () => {
+    try {
+      if (!railOpen || currentUserId == null) return;
+      const active = getActiveProfile();
+      if (!active || !active.nameEl) return;
+      const name = active.nameEl.textContent.trim();
+      const age = parseAge(active.ageEl);
+      if (!name || Number.isNaN(age)) return;
+      const r = resolve(name, age);
+      const activeId = r.status === 'hit' ? String(r.rec.user_id) : null;
+      if (activeId === currentUserId) return;          // still the same profile
+      if (activeId == null) { closeRail(); return; }   // ambiguous / unknown card
+      const full = fullById.get(activeId);
+      if (full && full._full) { currentUserId = activeId; renderFull(full, full._meta, true); }
+      else closeRail();
+    } catch (e) { if (DEBUG) console.error('[BE] syncRail', e); }
+  };
+
   // ── Lightbox ─────────────────────────────────────────────────────────
   const ensureLightbox = () => {
     if (lightboxEl) return;
@@ -1163,7 +1224,10 @@
   // ── Lazy fetch + open flow ───────────────────────────────────────────
   const requestUser = (userId, force) => {
     try {
-      const rec = byId.get(String(userId));
+      // In-flight dedupe: the same profile already has a pending signed
+      // GET_USER and this is not a forced refetch -> do not fire a second one.
+      if (!force && fetchTimer && currentUserId === String(userId)) return;
+      const rec = byId.get(String(userId)) || fullById.get(String(userId));
       const origId = rec ? rec.user_id : userId; // preserve original wire type
       currentReqId = (++seq) + ':' + Date.now();
       setStatusLine('GET_USER … requesting');
@@ -1217,7 +1281,9 @@
         const merged = mergeFull(d.user, d.meta);
         renderFull(merged || fullById.get(String(currentUserId)), d.meta, false);
       } else {
-        renderError(d.error || ('HTTP ' + (d.meta && d.meta.status)), fullById.get(String(currentUserId)) || byId.get(String(currentUserId)));
+        const st = d.meta && d.meta.status;
+        const msg = d.error || (st >= 200 && st < 300 ? 'no user in response' : 'HTTP ' + st);
+        renderError(msg, fullById.get(String(currentUserId)) || byId.get(String(currentUserId)));
       }
     } catch (err) { if (DEBUG) console.error('[BE] user reply', err); }
   });
