@@ -210,3 +210,9 @@ cython_debug/
 /tests/.env.lambda
 /.env.local
 /tests/integration/api/test_user_poi.py
+
+# Local OS + captured Bumble page artifacts (never commit — may contain session data)
+.DS_Store
+**/.DS_Store
+consent.bumble.com/
+us1.bumble.com/

@@ -106,8 +106,9 @@ window.addEventListener('bumble_encounter_data', (event) => {
     results.forEach(encounter => {
         if (encounter?.user?.name && encounter?.user?.age) {
             const key = `${encounter.user.name.trim()}-${encounter.user.age}`;
+            const theirVote = encounter.user.their_vote;
             encounterCache.set(key, encounter);
-            console.log(`[DEBUG] Cached encounter: ${key}`);
+            console.log(`[DEBUG] Cached encounter: ${key} with vote ${theirVote}`);
         }
     });
 
