@@ -18,6 +18,20 @@ When your browser requests the list of potential matches, the response from Bumb
 
 They send you the answer key and then ask you to pay to reveal it. This is not a hack. This is just reading the data they willingly give you. It took more time to write the `manifest.json` than to find the vulnerability.
 
+### The Other WTF: Their "Request Signature" is a Hardcoded MD5 Salt 🧂🤡
+
+So then I looked at how they "sign" requests. Every API call carries an `X-Pingback` header that's supposed to prove the request is legit. You ready for what it actually is?
+
+```
+X-Pingback = md5(requestBody + "whitetelevisionbulbelectionroofhorseflying")
+```
+
+That's the whole "signature." An MD5 of the body plus **one static salt string that ships, in plaintext, inside the JavaScript they hand to every single browser on Earth.** Open dev tools, search their bundle, there it is. Same salt for everyone, every session, never rotated. Yes, the salt is `whitetelevisionbulbelectionroofhorseflying`. No, I'm not making that up.
+
+A secret you mail to eight billion people is not a secret — it's a decoration. This authenticates nothing and stops no one; the only thing it defends against is someone who hasn't pressed Ctrl-F. It's the security equivalent of taping a "DO NOT ENTER" sign across an open doorway.
+
+To Bumble: if you want request integrity, that's what HMAC with a *server-side* key, nonces, and replay protection are for. A salt baked into the client is not a signature. (Still open to that freelance consulting gig. 🤙)
+
 ### The Strategic Advantage (aka Why Pay for Bumble Premium?) 🏆
 
 Bumble wants you to swipe blindly, wasting your time on people who may have already rejected you. This extension kills that. It gives you back the power by revealing who has *already liked you* directly on their profile card as you're swiping.
