@@ -36,7 +36,7 @@ To Bumble: If you're gonna C&D this, at least fix your API. Don't send the data 
 
 This isn't some complex attack. It's literally just two scripts.
 
-* `page.js`: This tiny script injects itself into the Bumble web app and uses basic function patching to listen to the `fetch` and `XMLHttpRequest` requests. When it sees the `SERVER_GET_ENCOUNTERS` API call, it grabs the results.
+* `page.js`: This tiny script runs in the Bumble web app's own page context (a `world: "MAIN"` content script injected at `document_start`) and uses basic function patching to listen to the `fetch` and `XMLHttpRequest` requests. When it sees the `SERVER_GET_ENCOUNTERS` API call, it grabs the results.
 * `content.js`: This script listens for the data from `page.js`. It then reads the name and age from the profile you're currently viewing and cross-references it with the data it just received. It then injects a simple, color-coded badge next to their name. That's it. It's embarrassingly simple.
 
 ### Setup & Usage
@@ -47,11 +47,18 @@ You're a dev. You know this.
 2.  Open Chrome and go to `chrome://extensions`.
 3.  Flick the "Developer mode" switch in the top-right corner.
 4.  Click "Load unpacked" and select the folder you just downloaded.
-5.  Go to `bumble.com/app`, open your dev tools so you can see the magic, and start swiping with your newfound omniscience.
+5.  Go to `bumble.com/app` and start swiping. Liked-you profiles light up with a green badge. (Logging is off by default — flip `DEBUG = true` at the top of `content.js` / `page.js` if you want the play-by-play in the console.)
+
+### What it won't do 🙅
+
+This stays a *read-only* tool — it shows you what Bumble already told your browser, nothing more. On purpose, it does **not**:
+
+* **Auto-swipe / mass-like.** Programmatically voting is account automation: a straight ToS violation and ban-bait. Click your own likes.
+* **Locate or de-anonymize anyone.** The payload carries distance and other signals; using them to triangulate someone's location or surface who-blocked-you is stalking, not "reading your own data." Hard no.
 
 ### To-Do (Because Why Stop Here?)
 
-* [X] Auto-swipe right only on people who have already liked you. Why click when a script can do it for you? (Closed source)
-* [X] Keep a history of everyone you've seen. A personal burn book, if you will. (Closed source)
+* [x] Keep a local history of everyone you've seen — a personal burn book — so badges survive a reload (persisted via `chrome.storage.local`).
+* [ ] Show *all* the fields Bumble sends per profile, inline on the card.
 
-Go cause some chaos. Or find love. I'm not your dad.
+Go find love. I'm not your dad.
