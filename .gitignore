@@ -220,4 +220,7 @@ us1.bumble.com/
 # Node / Bun toolchain
 node_modules/
 *.tsbuildinfo
-# dist/ is intentionally committed so the extension still loads unpacked with zero build.
+# The bundled extension output IS committed so it still loads unpacked with zero
+# build (overrides the inherited `dist/` ignore above, root-anchored only).
+!/dist/
+!/dist/**
