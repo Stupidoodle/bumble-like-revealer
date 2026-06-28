@@ -87,7 +87,7 @@ function toUrl(input: unknown): string {
 }
 
 export function installIntercept(origFetch: typeof fetch): void {
-  window.fetch = async function (this: unknown, ...args: Parameters<typeof fetch>) {
+  window.fetch = (async function (this: unknown, ...args: Parameters<typeof fetch>) {
     const res = await origFetch.apply(this as any, args);
     try {
       const url = toUrl(args[0]);
@@ -98,7 +98,7 @@ export function installIntercept(origFetch: typeof fetch): void {
       err("fetch hook", e);
     }
     return res;
-  };
+  }) as typeof window.fetch;
 
   const origOpen = XMLHttpRequest.prototype.open;
   const origSend = XMLHttpRequest.prototype.send;
@@ -110,7 +110,7 @@ export function installIntercept(origFetch: typeof fetch): void {
     ...rest: any[]
   ) {
     this[URL_KEY] = toUrl(url);
-    return origOpen.call(this, method, url as string, ...(rest as []));
+    return (origOpen as (...a: any[]) => void).apply(this, [method, url, ...rest]);
   };
 
   XMLHttpRequest.prototype.send = function (this: any, ...args: any[]) {
