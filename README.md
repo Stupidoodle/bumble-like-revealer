@@ -48,20 +48,28 @@ To Bumble: If you're gonna C&D this, at least fix your API. Don't send the data 
 
 ### How It Works 🔥
 
-This isn't some complex attack. It's literally just two scripts.
+Still embarrassingly simple at the core — two content scripts, now written as TypeScript modules in `src/` and bundled with [Bun](https://bun.sh) to `dist/page.js` + `dist/content.js`:
 
-* `page.js`: This tiny script runs in the Bumble web app's own page context (a `world: "MAIN"` content script injected at `document_start`) and uses basic function patching to listen to the `fetch` and `XMLHttpRequest` requests. When it sees the `SERVER_GET_ENCOUNTERS` API call, it grabs the results.
-* `content.js`: This script listens for the data from `page.js`. It then reads the name and age from the profile you're currently viewing and cross-references it with the data it just received. It then injects a simple, color-coded badge next to their name. That's it. It's embarrassingly simple.
+* **`page.js`** (`world: "MAIN"`, `document_start`): patches `fetch` / `XMLHttpRequest`, and when it sees the `SERVER_GET_ENCOUNTERS` call it grabs the results.
+* **`content.js`** (isolated world): reads the on-screen profile, cross-references the intercepted data, and injects the color-coded badge.
+
+**The dossier — the spicy part 🌶️:** click the badge (or hit `Cmd/Ctrl+D`) and it fires *one* signed `SERVER_GET_USER` request — yes, using that hardcoded salt I just roasted — to pull **every** field Bumble has on that profile into a panel over the card: their hidden `profile_score_numeric` (a 0–1000 hotness score they never show you), prompts, verification, languages, distance, the lot. They reverse-engineered their own paywall for me; I just asked nicely with the right header.
 
 ### Setup & Usage
 
-You're a dev. You know this.
+**Just run it:** grab the latest `.zip` from [Releases](../../releases), unzip, then `chrome://extensions` → flick on **Developer mode** → **Load unpacked** → pick the folder. (Or clone and load-unpacked the repo root — `dist/` is committed, so no build step required.)
 
-1.  Clone this repo or download it as a ZIP.
-2.  Open Chrome and go to `chrome://extensions`.
-3.  Flick the "Developer mode" switch in the top-right corner.
-4.  Click "Load unpacked" and select the folder you just downloaded.
-5.  Go to `bumble.com/app` and start swiping. Liked-you profiles light up with a green badge. (Logging is off by default — flip `DEBUG = true` at the top of `content.js` / `page.js` if you want the play-by-play in the console.)
+**Hacking on it:** [Bun](https://bun.sh) toolchain.
+
+```bash
+bun install
+bun run build      # src/ -> dist/{page,content}.js
+bun run dev        # watch + sourcemaps + console logging
+bun test           # md5 / pingback / cache unit tests
+bun run typecheck
+```
+
+Then `chrome://extensions` → Load unpacked → the repo root. Go to `bumble.com/app` and start swiping — liked-you profiles light up, and the badge opens the full dossier.
 
 ### What it won't do 🙅
 
@@ -73,6 +81,6 @@ This stays a *read-only* tool — it shows you what Bumble already told your bro
 ### To-Do (Because Why Stop Here?)
 
 * [x] Keep a local history of everyone you've seen — a personal burn book — so badges survive a reload (persisted via `chrome.storage.local`).
-* [ ] Show *all* the fields Bumble sends per profile, inline on the card.
+* [x] Show *all* the fields Bumble sends per profile, in a dossier panel on the card (click the badge).
 
 Go find love. I'm not your dad.
