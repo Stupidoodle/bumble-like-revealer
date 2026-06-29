@@ -1,5 +1,9 @@
 # Bumble's Paywall is a Joke - A Chrome Extension to See Who's Already Liked You 👀
 
+<p align="center">
+  <img src="docs/preview.svg" alt="The READOUT dossier: every field Bumble sends for a profile — vote status, hidden 0–1000 desirability score, verification, location, prompts — in one panel over the card." width="400">
+</p>
+
 You're not ugly, you're just inefficient.
 
 I was riding the high from dismantling Hinge's API and decided to take a peek at Bumble. I was wondering why my match queue felt like a graveyard. Turns out, Bumble's biggest feature, the "Beeline" (where they show you everyone who's already swiped right on you), isn't protected by some server-side fortress. It's literally just hidden with CSS.
