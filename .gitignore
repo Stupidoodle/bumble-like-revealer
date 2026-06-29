@@ -224,3 +224,6 @@ node_modules/
 # build (overrides the inherited `dist/` ignore above, root-anchored only).
 !/dist/
 !/dist/**
+
+# Release packaging output (the zip is uploaded to the GitHub Release, not committed).
+/release/

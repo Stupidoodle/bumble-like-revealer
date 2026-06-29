@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    branches: [master, main]
+
+# Never run two releases against the same branch at once.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write # create releases, push the version/changelog commit + tag
+  issues: write # comment on released issues
+  pull-requests: write # comment on released PRs
+
+jobs:
+  release:
+    name: Semantic release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # semantic-release needs full history + tags
+          persist-credentials: false # semantic-release authenticates via the token
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # semantic-release is a Node CLI; the build/package commands it shells out
+      # to run under Bun. Both runtimes are on PATH.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx --no-install semantic-release
