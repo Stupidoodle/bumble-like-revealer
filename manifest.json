@@ -11,8 +11,7 @@
     {
       "matches": [
         "https://bumble.com/app*",
-        "https://*.bumble.com/app*",
-        "http://localhost:9000/*"
+        "https://*.bumble.com/app*"
       ],
       "js": [
         "dist/page.js"
@@ -23,8 +22,7 @@
     {
       "matches": [
         "https://bumble.com/app*",
-        "https://*.bumble.com/app*",
-        "http://localhost:9000/*"
+        "https://*.bumble.com/app*"
       ],
       "js": [
         "dist/content.js"
