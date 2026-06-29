@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Bumble Like Revealer",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "description": "Reveals who already liked you on Bumble by reading the data Bumble already sends to your browser.",
   "permissions": [
     "storage"

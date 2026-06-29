@@ -1,6 +1,6 @@
 {
   "name": "bumble-like-revealer",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "Reveals who already liked you on Bumble by reading the data Bumble already sends to your browser.",
