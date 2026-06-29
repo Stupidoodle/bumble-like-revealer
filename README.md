@@ -1,7 +1,7 @@
 # Bumble's Paywall is a Joke - A Chrome Extension to See Who's Already Liked You 👀
 
 <p align="center">
-  <img src="docs/preview.png" alt="The badge on a Bumble card next to the READOUT dossier: vote status, the hidden 0–1000 desirability score, verification, location, and prompts — every field Bumble sends, in one panel." width="820">
+  <img src="docs/img.png" alt="The READOUT dossier panel — vote status, activity, identity, verification, location, and prompts: every field Bumble sends for a profile, in one overlay." width="340">
 </p>
 
 You're not ugly, you're just inefficient.
